@@ -73,7 +73,9 @@ reviewed integration selects the configured App/backend.
 
 ## Workstation deployment
 
-Requirements: Go 1.25, Python 3, AWS CLI v2 and an authorized AWS profile. Build:
+Requirements: Go 1.26.11 or a newer fully patched Go release, Python 3, AWS CLI v2
+and an authorized AWS profile. The build uses the reviewed compiler in `go.mod` by
+default. Build:
 
 ```sh
 scripts/build-queue-lambda.sh /private/tmp/sluicework-queue-release

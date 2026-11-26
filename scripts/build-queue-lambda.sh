@@ -2,10 +2,12 @@
 # Build only. No AWS API calls or credential upload.
 set -euo pipefail
 umask 077
+repo=$(cd "$(dirname "$0")/.." && pwd)
+export GOTOOLCHAIN="${GOTOOLCHAIN:-go$(sed -n 's/^go //p' "$repo/go.mod")}"
 output=${1:?Usage: scripts/build-queue-lambda.sh OUTPUT_DIRECTORY}
 mkdir -p "$output"
 output=$(cd "$output" && pwd)
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -buildvcs=false -trimpath -tags lambda.norpc -ldflags='-s -w' -o "$output/bootstrap" ./cmd/sluicework-queue-lambda
+(cd "$repo" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -buildvcs=false -trimpath -tags lambda.norpc -ldflags='-s -w' -o "$output/bootstrap" ./cmd/sluicework-queue-lambda)
 python3 - "$output" <<'PY'
 import hashlib, pathlib, sys, zipfile
 root = pathlib.Path(sys.argv[1])

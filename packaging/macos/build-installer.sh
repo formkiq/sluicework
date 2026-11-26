@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
+# The reviewed Go 1.26 release toolchain retains macOS 12 compatibility.
+export GOTOOLCHAIN="${GOTOOLCHAIN:-go$(sed -n 's/^go //p' "$repo/go.mod")}"
 arch=${SLUICEWORK_ARCH:-arm64}
 case "$arch" in arm64) machine=arm64;; amd64) machine=x86_64;; *) echo 'Choose arm64 or amd64' >&2; exit 1;; esac
 out=${1:-"$repo/release/Sluicework-macOS-$arch.run"}

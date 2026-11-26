@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
+# Keep default release builds on the reviewed security-patched compiler.
+export GOTOOLCHAIN="${GOTOOLCHAIN:-go$(sed -n 's/^go //p' "$repo/go.mod")}"
 out=${1:-"$repo/release"}
 [[ $# -eq 0 ]] || shift
 if [[ $# -eq 0 ]]; then set -- darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; fi

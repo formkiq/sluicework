@@ -10,7 +10,9 @@ are in `infrastructure/priority-queue/`. Operational guides are in `docs/`.
 
 ## Build and development
 
-Use Go 1.25+ and Node.js 22+ with npm. Build console assets before compiling Go:
+Use Go 1.26.11 or a newer fully patched Go release and Node.js 22+ with npm.
+Default release builds and CI use the reviewed version in `go.mod`; retain Go
+1.26 for macOS 12 binaries. Build console assets before compiling Go:
 
 ```sh
 (cd web && npm ci && npm run build)
@@ -31,6 +33,8 @@ lockfiles current and generated assets, dependencies and local state untracked.
 ## Testing
 
 Run `go test -race -buildvcs=false ./...` and `go vet -buildvcs=false ./...`.
+Check dependencies and the selected compiler's standard library with
+`go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...`.
 Run the Node suites with `node --test integrations/github-actions/*.test.mjs
 integrations/github-actions/priority/*.test.mjs` on one command line. Use
 `python3 -B -m unittest discover -s packaging/macos/tests -p 'test_*.py'`

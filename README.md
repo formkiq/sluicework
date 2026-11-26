@@ -57,12 +57,13 @@ JSON editing. [Central administration and guided setup](docs/admin-settings.md).
 including external hosts, labels, guided registration/removal and the published
 placement policy of compatible workflows. [GitHub Actions administration](docs/github-actions-admin.md).
 
-Use Go 1.25 or newer and Node.js 22 or newer with npm. Build the console first so Go can embed its production assets. The installer packaging script also builds the console when run on its own.
+Use Go 1.26.11 (or a newer fully patched Go release) and Node.js 22 or newer with npm. CI and default installer/Lambda builds select the reviewed compiler version from `go.mod`. Go 1.26 preserves macOS 12 support; [Go 1.27-built binaries require macOS 13](https://go.dev/doc/go1.26#darwin), so retain the default release toolchain when targeting macOS 12. Build the console first so Go can embed its production assets. The installer packaging script also builds the console when run on its own.
 
 ```bash
 (cd web && npm ci && npm run build)
 go test -race -buildvcs=false ./...
 go vet -buildvcs=false ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 node --test integrations/github-actions/*.test.mjs integrations/github-actions/priority/*.test.mjs
 go build -buildvcs=false -o sluicework ./cmd/sluicework
 bash packaging/build-release.sh

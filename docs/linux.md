@@ -15,7 +15,7 @@ The service installer also exposes `sluicework` at `/usr/local/bin/sluicework`. 
 
 ## Build and install
 
-The initial Linux target is Ubuntu 24.04 LTS with systemd, on ARM64 or x86-64. Build with Go 1.25+, Node.js 22+ and npm:
+The initial Linux target is Ubuntu 24.04 LTS with systemd, on ARM64 or x86-64. Build with Go 1.26.11 or a newer fully patched Go release, Node.js 22+ and npm. The release script defaults to the compiler version in `go.mod`:
 
 ```sh
 bash packaging/build-release.sh
