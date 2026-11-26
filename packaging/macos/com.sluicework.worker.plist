@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.sluicework.worker</string>
+    <key>UserName</key><string>_sluiceworker</string>
+    <key>GroupName</key><string>_sluiceworker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Sluicework/bin/sluicework</string>
+        <string>worker</string>
+        <string>--config</string>
+        <string>/Library/Sluicework/etc/worker.json</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>10</integer>
+    <key>Umask</key><integer>63</integer>
+    <key>WorkingDirectory</key><string>/var/empty</string>
+</dict>
+</plist>

@@ -1,0 +1,51 @@
+{
+  "backendId": "example-workstation-queue",
+  "appId": 100001,
+  "installationId": 100002,
+  "since": "2026-01-01T00:00:00Z",
+  "primary": {
+    "platform": "linux",
+    "label": "self-hosted",
+    "host": "local"
+  },
+  "fallback": {
+    "platform": "macos-arm64",
+    "label": "sluicework-example-mac",
+    "host": "local"
+  },
+  "fallbackMinutes": 2,
+  "repositories": [
+    {
+      "name": "example-org/application",
+      "id": 100003,
+      "branch": "main",
+      "heartbeatSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "priority": "high",
+      "cloudPlatform": "linux-arm64",
+      "coordinators": [
+        {
+          "file": "ci.yml",
+          "kind": "build",
+          "check": "build",
+          "deploy": false
+        }
+      ]
+    },
+    {
+      "name": "example-org/documentation",
+      "id": 100004,
+      "branch": "main",
+      "heartbeatSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "priority": "low",
+      "cloudPlatform": "linux-x64",
+      "coordinators": [
+        {
+          "file": "ci.yml",
+          "kind": "site",
+          "check": "build",
+          "deploy": false
+        }
+      ]
+    }
+  ]
+}

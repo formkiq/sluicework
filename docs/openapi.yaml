@@ -1,0 +1,3661 @@
+openapi: 3.1.0
+info:
+  title: Sluicework API
+  version: 1.0.0
+  description: Single-cluster v1 API for the same-origin console and outbound workers. The cluster is one shared team
+    workspace. Browser mutations use application/json and the same origin. The service requires verified HTTPS on the
+    LAN and permits HTTP on loopback for local setup. Request bodies are limited to 10 MiB, except worker completion
+    uploads, which allow 25 MiB to accommodate JSON escaping of bounded result bytes. All dates with offsets use RFC
+    3339. IDs are opaque strings.
+servers:
+- url: /api/v1
+security:
+- browserSession: []
+paths:
+  /openapi.yaml:
+    get:
+      operationId: getAPIContract
+      summary: Download the OpenAPI 3.1 contract
+      tags:
+      - Contract
+      security: []
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /login:
+    post:
+      operationId: login
+      summary: Start a browser session
+      tags:
+      - Session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Login'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          headers:
+            Set-Cookie:
+              description: 12-hour HttpOnly SameSite=Strict session cookie scoped to /api/v1. Secure over HTTPS.
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /logout:
+    post:
+      operationId: logout
+      summary: End the current session
+      tags:
+      - Session
+      security: []
+      responses:
+        '204':
+          description: Completed with no response body.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /session:
+    get:
+      operationId: getSession
+      summary: Get the signed-in user
+      tags:
+      - Session
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /overview:
+    get:
+      operationId: getOverview
+      summary: Read cluster activity and recent failures
+      tags:
+      - Overview
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Overview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /github/repositories:
+    get:
+      operationId: listGitHubRepositories
+      summary: Administrator list of explicitly configured repository contexts
+      responses:
+        '200':
+          description: Primary and approved shared repositories
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [primaryRepository, repositories]
+                properties:
+                  primaryRepository: {type: string}
+                  repositories: {type: array, items: {type: string}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /github/runner-groups:
+    get:
+      operationId: listWorkstationRunnerGroups
+      summary: Organization-owned groups limited to selected private repositories
+      responses:
+        '200':
+          description: Candidates for shared workstation registration; exact access is validated before a grant
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/GitHubRunnerGroup'}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /github/runners:
+    parameters:
+    - {name: repository, in: query, required: false, schema: {type: string}, description: Explicitly approved repository; defaults to the primary repository}
+    get:
+      operationId: listGitHubRunners
+      summary: Administrator inventory of repository and opted-in organization runners
+      responses:
+        '200':
+          description: Runner metadata, access checks and unique placement targets; no credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitHubRunnerInventory'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Configure a GitHub App first
+        '502':
+          description: GitHub rejected repository access; organization failures are reported separately in the inventory
+  /github/runners/{scope}/{id}/labels:
+    parameters:
+    - {name: repository, in: query, required: false, schema: {type: string}, description: Explicitly approved repository; defaults to the primary repository}
+    - {name: scope, in: path, required: true, schema: {type: string, enum: [repository, organization]}}
+    - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    put:
+      operationId: updateExternalGitHubRunnerLabels
+      summary: Replace only an external runner's custom labels; Sluicework-owned runners are protected
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [labels]
+              properties:
+                labels:
+                  type: array
+                  maxItems: 32
+                  uniqueItems: true
+                  items: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'}
+                  description: Default platform labels and the sluicework- prefix are reserved
+      responses:
+        '204': {description: Label update requested in GitHub and audited}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {description: Runner not found in this scope}
+        '502': {description: GitHub rejected the management request}
+  /github/runners/{scope}/{id}:
+    parameters:
+    - {name: repository, in: query, required: false, schema: {type: string}, description: Explicitly approved repository; defaults to the primary repository}
+    - {name: scope, in: path, required: true, schema: {type: string, enum: [repository, organization]}}
+    - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    delete:
+      operationId: removeExternalGitHubRunner
+      summary: Remove an idle offline external registration after exact-name confirmation; stop its host service first
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmName]
+              properties:
+                confirmName: {type: string, description: Exact current GitHub runner name}
+      responses:
+        '204': {description: Registration removed and request audited}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: Runner busy, online, renamed, or connection replaced}
+        '502': {description: GitHub rejected removal; host processes were not signalled}
+  /github/runners/registration:
+    parameters:
+    - {name: repository, in: query, required: false, schema: {type: string}, description: Explicitly approved repository; defaults to the primary repository}
+    post:
+      operationId: prepareExternalRunnerRegistration
+      summary: Administrator-only guided official runner setup with a short-lived registration token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [scope, os, arch, name, label]
+              properties:
+                scope: {type: string, enum: [repository, organization]}
+                os: {type: string, enum: [linux, osx]}
+                arch: {type: string, enum: [arm64, x64]}
+                name: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'}
+                label: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'}
+      responses:
+        '200':
+          description: Non-cacheable setup session; token is not stored in SQLite or audit records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitHubRegistrationSetup'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '502': {description: Missing GitHub management permission or official download metadata}
+  /github/routing:
+    parameters:
+    - {name: repository, in: query, required: false, schema: {type: string}, description: Explicitly approved repository; defaults to the primary repository}
+    get:
+      operationId: getGitHubBuildPlacement
+      summary: Read version 1 integration metadata and the published policy or existing defaults
+      responses:
+        '200':
+          description: Policy with edit revision; requires Contents read and Variables write grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitHubRoutingState'
+        '400': {description: Invalid manually edited published configuration}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: Integration manifest is not installed}
+        '502': {description: Additional GitHub App permissions need approval}
+    put:
+      operationId: publishGitHubBuildPlacement
+      summary: Publish a complete versioned SLUICEWORK_ROUTING variable for future compatible workflow runs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [policy, revision]
+              properties:
+                policy:
+                  $ref: '#/components/schemas/GitHubRoutingPolicy'
+                revision: {type: string, description: Revision from the last successful read}
+      responses:
+        '200':
+          description: One repository variable published; workflow files and already dispatched jobs are unchanged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitHubRoutingState'
+        '400': {description: Invalid, ambiguous, unsupported or unavailable target}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: Stale edit or replaced connection; reload before saving}
+        '502': {description: GitHub rejected the management request}
+  /harness:
+    get:
+      operationId: getCodingGateway
+      summary: Read coding gateway policy, client metadata and recent request audit
+      responses:
+        '200': {description: Policy, clients without credentials, and metadata-only call history}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /harness/policy:
+    put:
+      operationId: updateCodingGatewayPolicy
+      summary: Enable or pause coding access and set shared local inference admission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, maxConcurrent]
+              properties:
+                enabled: {type: boolean}
+                maxConcurrent: {type: integer, minimum: 1, maximum: 4}
+      responses:
+        '204': {description: Policy updated and audited; paused coding requests are cancelled}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /harness/clients:
+    post:
+      operationId: createCodingClient
+      summary: Issue a one-time model-scoped coding credential for any client workstation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, serverUrl, connectionId, models, contextLength, maxOutputTokens, maxConcurrent, timeoutSeconds, lifetimeDays]
+              properties:
+                name: {type: string, maxLength: 128}
+                serverUrl: {type: string, description: Explicit HTTPS orchestrator origin reachable from the client; no localhost default}
+                connectionId: {type: string, description: Enabled Ollama or Herd connection}
+                models: {type: array, minItems: 1, maxItems: 16, items: {type: string}}
+                contextLength: {type: integer, minimum: 4096, maximum: 32768}
+                maxOutputTokens: {type: integer, minimum: 128, maximum: 8192}
+                maxConcurrent: {type: integer, minimum: 1, maximum: 4}
+                timeoutSeconds: {type: integer, minimum: 15, maximum: 1800, default: 1800}
+                lifetimeDays: {type: integer, minimum: 1, maximum: 90}
+      responses:
+        '200': {description: One-time private client bundle and public CA fingerprint; server stores only the credential hash}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /harness/clients/{id}/timeout:
+    parameters:
+    - {name: id, in: path, required: true, schema: {type: string}}
+    put:
+      operationId: updateCodingClientTimeout
+      summary: Set the timeout for subsequent requests without rotating the client credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [timeoutSeconds]
+              properties:
+                timeoutSeconds: {type: integer, minimum: 15, maximum: 1800}
+      responses:
+        '204': {description: Timeout saved and audited; active requests keep their existing deadline}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /harness/clients/{id}/revoke:
+    parameters:
+    - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: revokeCodingClient
+      summary: Revoke a coding client and cancel its active model requests
+      responses:
+        '204': {description: Credential revoked and operation audited}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /harness/v1/models:
+    get:
+      operationId: codingModels
+      security: [{codingBearer: []}]
+      summary: List the coding credential's current permitted models
+      responses:
+        '200': {description: OpenAI-compatible model inventory scoped to this credential}
+        '401': {description: Credential invalid, expired or revoked}
+        '503': {description: Coding gateway or inference connection disabled}
+  /harness/v1/responses:
+    post:
+      operationId: codingResponse
+      security: [{codingBearer: []}]
+      summary: Execute a server-governed stateless Responses request through native local inference
+      description: No cookie or worker credential is accepted. The server chooses the configured model endpoint, enforces the current model allowlist and output/context/keep-alive limits, shares admission with scheduled local AI requests, and audits metadata only. Text messages and client-executed function/custom tools are supported. Stateful IDs, cloud routing, hosted tools and resource overrides are rejected. Remote access requires HTTPS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model: {type: string}
+                input: {description: Text or a complete array of messages, tool calls and client tool outputs}
+                stream: {type: boolean}
+                max_output_tokens: {type: integer, minimum: 1, description: Clamped to the server-side client limit}
+                tools: {type: array, items: {type: object}}
+      responses:
+        '200':
+          description: Completed JSON response or SSE response events; incomplete/broken streams cannot report success
+          content:
+            application/json: {schema: {type: object}}
+            text/event-stream: {schema: {type: string}}
+        '400': {description: Unsupported or invalid Responses request}
+        '401': {description: Credential invalid, expired or revoked}
+        '429': {description: Capacity did not become available within the bounded admission wait}
+        '502': {description: Model request failed; provider diagnostics and credentials are withheld}
+        '503': {description: Coding gateway paused}
+        '504': {description: Coding client request deadline exceeded; reduce input/output or adjust the client timeout}
+  /github/spot:
+    get:
+      operationId: getGitHubSpotFleet
+      summary: Read shared Spot settings and authenticated fleet readiness
+      tags: [GitHub Actions]
+      responses:
+        '200':
+          description: Settings, edit revision, supported profiles, approved repositories and public allocation status
+          content:
+            application/json:
+              schema: {type: object}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: Configure the primary GitHub connection and version 3 integration first}
+        '502': {description: GitHub rejected the management request}
+    put:
+      operationId: updateGitHubSpotFleet
+      summary: Publish audited shared Spot settings for new admissions
+      tags: [GitHub Actions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [settings, revision]
+              properties:
+                settings:
+                  type: object
+                  required: [version, backendId, enabled, maxConcurrent, queueMinutes, startupMinutes, runtimeMinutes, repositories]
+                  properties:
+                    version: {type: integer, enum: [1]}
+                    backendId: {type: string}
+                    enabled: {type: boolean}
+                    maxConcurrent: {type: integer, minimum: 0, maximum: 3}
+                    queueMinutes: {type: integer, minimum: 1, maximum: 30}
+                    startupMinutes: {type: integer, minimum: 1, maximum: 15}
+                    runtimeMinutes: {type: integer, minimum: 15, maximum: 180}
+                    repositories:
+                      type: object
+                      description: Approved repository full names mapped to runner profiles
+                      additionalProperties: {type: string, enum: [small, standard]}
+                revision: {type: string, description: Revision from the last read}
+      responses:
+        '200': {description: Published settings and refreshed fleet state}
+        '400': {description: Invalid settings, unapproved repository or unavailable fleet}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: Stale revision; refresh before saving}
+        '502': {description: GitHub rejected the management request}
+  /github/activity:
+    get:
+      operationId: getGitHubBuildActivity
+      summary: Read cached GitHub build activity for enrolled workstation runners
+      description: Metadata is synchronized in the background with a separate Actions read token. Failures retain last-known records and an issue message; no runner-control request depends on sync. Up to 100 active/recent records are returned. Logs and artifacts remain on GitHub.
+      tags:
+      - GitHub Actions
+      responses:
+        '200':
+          description: Cached activity, or configured false when no GitHub App is configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitHubActivity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /machines:
+    get:
+      operationId: listMachines
+      summary: List workers and current capacity
+      tags:
+      - Machines
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Machine'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /machines/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    patch:
+      operationId: updateMachine
+      summary: Update labels, capacity, drain state or CI registration
+      tags:
+      - Machines
+      description: Operators may change draining, slots and roleLimits, independently or together. Changing labels or
+        the GitHub runner registration requires an administrator.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MachinePatch'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /machines/{id}/revoke:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: revokeMachine
+      summary: Permanently revoke the worker credential
+      tags:
+      - Machines
+      x-required-role: admin
+      responses:
+        '204':
+          description: Completed with no response body.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /enrollment-tokens:
+    post:
+      operationId: issueEnrollmentToken
+      summary: Issue a one-use enrollment token
+      tags:
+      - Machines
+      x-required-role: admin
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List current approved job definitions
+      tags:
+      - Jobs
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      operationId: createJob
+      summary: Approve a new job template
+      tags:
+      - Jobs
+      x-required-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /jobs/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getJob
+      summary: Get the current job revision
+      tags:
+      - Jobs
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      operationId: reviseJob
+      summary: Approve a new revision of a job
+      tags:
+      - Jobs
+      x-required-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /jobs/{id}/runs:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: queueRun
+      summary: Queue a run with selected inputs
+      tags:
+      - Jobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InputValues'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /runs:
+    get:
+      operationId: listRuns
+      summary: List the 100 most recent matching runs
+      tags:
+      - Runs
+      parameters:
+      - name: job
+        in: query
+        description: Job ID.
+        required: false
+        schema:
+          type: string
+      - name: machine
+        in: query
+        description: ID of a machine assigned to any attempt.
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        description: Current run state.
+        required: false
+        schema:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - cancelled
+          - interrupted
+      - name: before
+        in: query
+        description: Return the next page of older matching runs using the final run ID from the previous page.
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /runs/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getRun
+      summary: Inspect a run and all its attempts
+      tags:
+      - Runs
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /runs/{id}/cancel:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: cancelRun
+      summary: Cancel a queued run or request cancellation of its active attempt
+      tags:
+      - Runs
+      responses:
+        '204':
+          description: Completed with no response body.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /runs/{id}/retry:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: retryRun
+      summary: Append a new attempt to a terminal run
+      tags:
+      - Runs
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /runs/{id}/logs:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listLogs
+      summary: Read up to 1000 stored log records after the supplied cursor
+      tags:
+      - Runs
+      parameters:
+      - $ref: '#/components/parameters/After'
+      - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Log'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /runs/{id}/events:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: streamRun
+      summary: Stream run updates and retained logs
+      tags:
+      - Runs
+      parameters:
+      - $ref: '#/components/parameters/After'
+      - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          description: Success.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: 'id: 42
+
+                event: log
+
+                data: {"id":42,"attemptId":"attempt-1","at":"2026-11-19T13:00:00Z","text":"Starting tests"}
+
+
+                '
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      description: The server replays durable log records newer than the exclusive cursor and sends the current run snapshot.
+        Each log event uses its decimal Log.id as the SSE id. A run event carries a full Run whenever it changes. Comment
+        frames keep idle streams alive. The stream closes after the terminal snapshot or session expiration. Reconnect
+        using Last-Event-ID or fetch stored logs using after, advancing through all pages.
+      x-sse-events:
+        log:
+          data:
+            $ref: '#/components/schemas/Log'
+          id: Log.id
+        run:
+          data:
+            $ref: '#/components/schemas/Run'
+  /runs/{id}/calls:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getRunCalls
+      summary: Inspect provider timings, model, status and available token counts
+      tags:
+      - Runs
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderCall'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /schedules:
+    get:
+      operationId: listSchedules
+      summary: List schedules in next-run order
+      tags:
+      - Schedules
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Schedule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      operationId: createSchedule
+      summary: Create a zoned cron schedule
+      tags:
+      - Schedules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleSpec'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /schedules/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getSchedule
+      summary: Get a schedule and latest occurrence
+      tags:
+      - Schedules
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      operationId: updateSchedule
+      summary: Replace a schedule's configuration and recompute its next run
+      tags:
+      - Schedules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleSpec'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      operationId: deleteSchedule
+      summary: Remove a schedule and preserve its history
+      tags:
+      - Schedules
+      responses:
+        '204':
+          description: Completed with no response body.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /schedules/{id}/occurrences:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listOccurrences
+      summary: Get the latest 100 occurrences, including missed and overlapping slots
+      tags:
+      - Schedules
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Occurrence'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /chatgpt/accounts:
+    get:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /chatgpt/sign-in:
+    post:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /chatgpt/sign-in/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /chatgpt/sign-in/{id}/cancel:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /connections/{id}/chatgpt/sign-out:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /connections/{id}/chatgpt/models:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /chatgpt/handoff/{id}/start:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /chatgpt/handoff/{id}/complete:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      deprecated: true
+      summary: Retired shared subscription endpoint; use a private personal agent
+      security: []
+      responses:
+        '410':
+          description: The shared server never hosts subscription credentials or sign-in. Use personal-agent login in your OS-owned runtime.
+  /personal-agents:
+    get:
+      operationId: listOwnPersonalAgents
+      summary: List only the signed-in user’s personal runtimes and signed activity reports
+      tags: [Personal agents]
+      x-required-role: operator
+      responses:
+        '200':
+          description: Success. No subscription credentials are accepted or returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/PersonalRuntime'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /personal-agents/tickets:
+    post:
+      operationId: preparePersonalAgentEnrollment
+      summary: Prepare a ten-minute one-use enrollment capability for the authenticated user
+      tags: [Personal agents]
+      x-required-role: operator
+      responses:
+        '200':
+          description: Success. No subscription credentials are accepted or returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonalTicket'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /personal-agents/enroll:
+    post:
+      operationId: enrollPersonalAgent
+      summary: Consume an enrollment ticket and prove possession of the runtime signing key
+      tags: [Personal agents]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PersonalEnrollment'}
+      responses:
+        '200':
+          description: Success. No subscription credentials are accepted or returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonalRuntime'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /personal-agents/sync:
+    post:
+      operationId: syncPersonalAgent
+      summary: Accept a signed replay-protected status report and return inert proposals; never commands
+      tags: [Personal agents]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PersonalEnvelope'}
+      responses:
+        '200':
+          description: Success. No subscription credentials are accepted or returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/PersonalProposal'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /personal-tasks:
+    get:
+      operationId: listOwnPersonalProposals
+      summary: List inert task proposals for the authenticated owner
+      tags: [Personal agents]
+      x-required-role: operator
+      responses:
+        '200':
+          description: Success. No subscription credentials are accepted or returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/PersonalProposal'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      operationId: createPersonalProposal
+      summary: Save an inert personal task; local consent is required to activate it
+      tags: [Personal agents]
+      x-required-role: operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PersonalProposalInput'}
+      responses:
+        '200':
+          description: Success. No subscription credentials are accepted or returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonalProposal'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /personal-tasks/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    put:
+      operationId: editPersonalProposal
+      summary: Edit a proposal without changing the immutable local approval
+      tags: [Personal agents]
+      x-required-role: operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PersonalProposalInput'}
+      responses:
+        '200':
+          description: Success. No subscription credentials are accepted or returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonalProposal'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /connections:
+    get:
+      operationId: listConnections
+      summary: List shared and own connections, or approval metadata for administrators
+      tags:
+      - AI connections
+      x-required-role: operator
+      parameters:
+      - name: purpose
+        in: query
+        required: false
+        description: Administrators may request job-approval metadata for all connections. This does not authorize using or managing another user's subscription.
+        schema: {type: string, enum: [job-approval]}
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Connection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      operationId: createConnection
+      summary: Register a named local or API-key connection
+      tags:
+      - AI connections
+      x-required-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionConfig'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /connections/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    put:
+      operationId: updateConnection
+      summary: Update a shared connection (admin) or own ChatGPT connection (member)
+      tags:
+      - AI connections
+      x-required-role: operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionConfig'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /connections/{id}/test:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: testConnection
+      summary: Test the first permitted model and refresh connection health
+      tags:
+      - AI connections
+      description: Inspect health and last_error in the success response. Administrators test shared connections; members may test only their own ChatGPT connection.
+      x-required-role: operator
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /model-catalog:
+    get:
+      operationId: listModelPresets
+      summary: List curated local model presets and memory guidance
+      tags: [AI connections]
+      x-required-role: operator
+      responses:
+        '200':
+          description: Embeddings are listed for planning with installable=false.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ModelPreset'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /connections/{id}/models:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listLocalModels
+      summary: Inspect installed models and the latest 20 downloads for this connection
+      tags: [AI connections]
+      x-required-role: admin
+      description: Ollama connections only. Runtime unavailability is reported in runtimeError while download history remains available.
+      responses:
+        '200':
+          description: Runtime inventory and persistent download history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelInventory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      operationId: installLocalModel
+      summary: Start a background model download on the selected Ollama endpoint
+      tags: [AI connections]
+      x-required-role: admin
+      description: Accepts only installable catalog tags. At most one download per endpoint and four per server. Downloads survive browser disconnection, stop after two hours, and are interrupted by server restart. Retry resumes layers retained by Ollama. Success verifies the installed tag and adds it to permitted models if the connection settings are unchanged. No prompts or provider keys are sent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [model]
+              properties:
+                model:
+                  type: string
+                  enum: ['qwen3.5:4b', 'qwen3.5:9b', 'gemma4:12b', 'qwen3.6:27b-coding']
+      responses:
+        '200':
+          description: Download started. Poll GET models to follow progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelInstallation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /connections/{id}/models/{install}/cancel:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    - name: install
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: cancelModelDownload
+      summary: Cancel a model download without deleting existing model files
+      tags: [AI connections]
+      x-required-role: admin
+      responses:
+        '204':
+          description: Cancellation requested or download already terminal. Poll inventory for final status.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /worker/enroll:
+    post:
+      operationId: enrollWorker
+      summary: Exchange a short-lived token for a worker credential
+      tags:
+      - Workers
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollRequest'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enrollment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /worker/heartbeat:
+    post:
+      operationId: heartbeat
+      summary: Advertise the worker's current roles and runner status
+      tags:
+      - Workers
+      security:
+      - workerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerInfo'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /machines/{id}/workstation/availability:
+    post:
+      operationId: requestWorkstationCapacity
+      summary: Offer or pause capacity from the main admin without interrupting assigned work
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation]
+              properties:
+                operation:
+                  type: string
+                  enum: [enable, pause]
+                minutes:
+                  type: integer
+                  minimum: 0
+                  maximum: 1440
+                  description: Zero or omitted uses the machine's configured availability window
+      responses:
+        '200':
+          description: One-time request recorded; the worker reports acknowledgement on heartbeat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+        '409':
+          description: Clear the machine drain before offering capacity
+  /settings:
+    get:
+      operationId: getClusterSettings
+      summary: Read main-admin cluster setup and public certificate information
+      responses:
+        '200':
+          description: Active settings; private keys and worker credentials are never returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterSettings'
+        '403':
+          description: Administrator required
+  /settings/network:
+    put:
+      operationId: configureClusterNetwork
+      summary: Configure an additional managed HTTPS listener without changing primary access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled, hostname, port]
+              properties:
+                enabled:
+                  type: boolean
+                hostname:
+                  type: string
+                  description: Local DNS hostname or private IP included in the certificate SAN
+                port:
+                  type: integer
+                  minimum: 1024
+                  maximum: 65535
+                rotateCa:
+                  type: boolean
+                  default: false
+                  description: Explicitly replace cluster trust; all remote workers must then trust the new CA
+      responses:
+        '200':
+          description: Listener applied and saved; primary access remains available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterSettings'
+        '400':
+          description: Invalid hostname or port
+        '409':
+          description: Port unavailable; previous configuration retained
+  /settings/github:
+    put:
+      operationId: configureGitHubApp
+      summary: Save the central GitHub App connection and optional private-key upload
+      description: Changing the App, installation or repository requires existing runner registrations to drain. Key replacement for the same App preserves registrations. The key is stored in a private server-owned file and never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+                appId:
+                  type: integer
+                  minimum: 1
+                installationId:
+                  type: integer
+                  minimum: 1
+                repository:
+                  type: string
+                workstationGroupId: {type: integer, minimum: 0, description: Dedicated selected-repository organization runner group; zero disables sharing}
+                workstationRepositories: {type: array, maxItems: 10, items: {type: string}, description: Exact private repository allowlist including the primary repository}
+                organizationRunners:
+                  type: boolean
+                  description: Explicitly opt into organization runner administration; omission preserves the existing choice
+                privateKeyPem:
+                  type: string
+                  writeOnly: true
+                  maxLength: 16384
+                  description: PEM RSA private key; omit to preserve the existing key
+      responses:
+        '200':
+          description: Connection saved and active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterSettings'
+        '409':
+          description: Existing runners must drain before scope or App changes
+  /settings/github/test:
+    post:
+      operationId: testGitHubApp
+      summary: Verify runner administration and Actions read access using separate scoped tokens
+      responses:
+        '200':
+          description: Repository access verified without registering or deleting a runner
+        '400':
+          description: Connection unavailable or required access missing
+  /open-webui:
+    get:
+      operationId: openWebUIStatus
+      summary: Read the configured Open WebUI companion endpoint and live health status
+      responses:
+        '200':
+          description: Current Open WebUI configuration and live /health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenWebUIStatus'
+  /settings/open-webui:
+    put:
+      operationId: configureOpenWebUI
+      summary: Save the Open WebUI companion URL and optional Ollama backend URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled, url]
+              properties:
+                enabled:
+                  type: boolean
+                url:
+                  type: string
+                ollamaBaseUrl:
+                  type: string
+      responses:
+        '200':
+          description: Open WebUI settings saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterSettings'
+        '400':
+          description: Invalid Open WebUI or Ollama origin URL
+  /settings/open-webui/test:
+    post:
+      operationId: testOpenWebUI
+      summary: Probe an Open WebUI endpoint's /health route
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                url:
+                  type: string
+      responses:
+        '200':
+          description: Open WebUI health check succeeded
+        '400':
+          description: Open WebUI endpoint unavailable or invalid
+  /settings/log-limit:
+    put:
+      operationId: configureRetainedOutput
+      summary: Set the retained output limit without a server restart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [bytes]
+              properties:
+                bytes:
+                  type: integer
+                  minimum: 1
+                  maximum: 67108864
+      responses:
+        '200':
+          description: Policy saved and active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterSettings'
+  /settings/worker-bundle:
+    get:
+      operationId: downloadWorkerSetup
+      summary: Download guided worker bootstrap, helper and public CA
+      description: Includes the server binary only for a matching OS/architecture. No enrollment token, GitHub App key, CA private key or worker credential is included. Only administrators can download a bundle.
+      parameters:
+      - in: query
+        name: name
+        required: true
+        schema:
+          type: string
+          maxLength: 128
+      - in: query
+        name: url
+        required: true
+        schema:
+          type: string
+          format: uri
+      - in: query
+        name: os
+        required: true
+        schema:
+          type: string
+          enum: [darwin, linux]
+      - in: query
+        name: arch
+        required: true
+        schema:
+          type: string
+          enum: [arm64, amd64]
+      - in: query
+        name: kind
+        schema:
+          type: string
+          enum: [ci, worker]
+          default: ci
+      responses:
+        '200':
+          description: ZIP with SHA256SUMS and setup instructions
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+  /worker/status:
+    get:
+      operationId: getOwnWorkerStatus
+      summary: Read only the authenticated worker's machine status
+      security:
+      - workerBearer: []
+      responses:
+        '200':
+          description: This worker's current machine record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+  /worker/drain:
+    post:
+      operationId: drainOwnWorker
+      summary: Withdraw only this worker's new Sluicework claims while assigned work finishes
+      security:
+      - workerBearer: []
+      responses:
+        '200':
+          description: This worker is draining; no other machine is modified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+  /worker/runner:
+    post:
+      operationId: workstationRunner
+      tags: [Workers]
+      summary: Acquire or control this machine's approved ephemeral GitHub runner
+      description: Requires server-side GitHub App configuration and an administrator-approved workstation runner. Scope, labels and runner IDs are derived from that registration. JIT credentials are returned only once and must never be logged. Pause withdraws custom labels without canceling assigned work.
+      security:
+      - workerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation]
+              properties:
+                operation:
+                  type: string
+                  enum: [acquire, status, enable, pause, release]
+      responses:
+        '200':
+          description: Current runner lease; a new grant includes one-run credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runner:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      busy:
+                        type: boolean
+                      status:
+                        type: string
+                  encoded_jit_config:
+                    type: string
+                    description: Secret one-run credentials; never log or expose in the console.
+        '401':
+          description: Invalid or revoked worker credential
+        '400':
+          description: Invalid operation or no approved workstation registration
+        '409':
+          description: Draining machine or busy runner cannot be enabled/released
+        '503':
+          description: GitHub App not configured
+  /worker/claim:
+    post:
+      operationId: claimAttempt
+      summary: Atomically claim eligible queued work
+      tags:
+      - Workers
+      security:
+      - workerBearer: []
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Claim'
+        '204':
+          description: No eligible work or free capacity.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /worker/attempts/{id}/renew:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: renewLease
+      summary: Renew a lease or receive a pending cancellation request
+      description: An attempt with a pending cancellation retains its existing lease deadline to allow the worker to confirm it stopped.
+      tags:
+      - Workers
+      security:
+      - workerBearer: []
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Renewal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /worker/attempts/{id}/logs:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: appendLog
+      summary: Append bounded logs to the active attempt
+      tags:
+      - Workers
+      security:
+      - workerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogUpload'
+      responses:
+        '204':
+          description: Completed with no response body.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /worker/attempts/{id}/complete:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: completeAttempt
+      summary: Report the terminal status and bounded output
+      tags:
+      - Workers
+      security:
+      - workerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Completion'
+      responses:
+        '204':
+          description: Completed with no response body.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /worker/attempts/{id}/infer:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: infer
+      summary: Request inference for an authorized AI attempt
+      tags:
+      - Workers
+      security:
+      - workerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InferenceInputs'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InferenceResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '502':
+          $ref: '#/components/responses/Upstream'
+components:
+  securitySchemes:
+    codingBearer:
+      type: http
+      scheme: bearer
+      description: Revocable model-scoped coding credential; distinct from console and worker identities
+
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: sluicework_session
+    workerBearer:
+      type: http
+      scheme: bearer
+      description: Per-worker credential issued at enrollment. Attempt operations also require an active lease owned
+        by the calling worker.
+  parameters:
+    Id:
+      name: id
+      in: path
+      description: Opaque resource identifier. Under /worker/attempts this is the attempt ID returned by claim.
+      required: true
+      schema:
+        type: string
+    After:
+      name: after
+      in: query
+      description: Exclusive log ID cursor. Defaults to zero.
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        format: int64
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      description: Exclusive log ID used for reconnects. Takes precedence over after.
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        format: int64
+  responses:
+    BadRequest:
+      description: Invalid request, input, JSON body or cursor.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Credentials are missing, expired, invalid or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Role, transport or browser origin check failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No resource has this ID.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The operation conflicts with current state, an active lease, or the provider policy.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMedia:
+      description: Send Content-Type application/json on mutations, including bodyless console operations.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: The structured JSON result exceeds the retention limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Upstream:
+      description: The broker could not complete the provider call.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: Internal service or database failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    GitHubRoutingPolicy:
+      type: object
+      additionalProperties: false
+      required: [version, placement, platform, machineLabel, queueMinutes]
+      allOf:
+        - if:
+            properties: {version: {enum: [2, 3]}}
+          then:
+            required: [fallbackRunner]
+          else:
+            not: {required: [fallbackRunner]}
+        - if:
+            properties: {version: {const: 2}}
+          then:
+            properties: {placement: {enum: [prefer-local, local-only]}}
+        - if:
+            properties: {version: {const: 3}}
+          then:
+            required: [priority, fallbackQueueMinutes]
+            oneOf:
+              - properties: {priority: {const: high}, queueMinutes: {enum: [5, 15]}}
+              - properties: {priority: {const: low}, queueMinutes: {const: 60}}
+          else:
+            properties: {queueMinutes: {maximum: 15}}
+            not:
+              anyOf:
+                - required: [priority]
+                - required: [fallbackQueueMinutes]
+      properties:
+        version: {type: integer, enum: [1, 2, 3]}
+        fallbackRunner:
+          type: object
+          description: Version 2 requires a distinct second runner; absent in version 1. Queue timeout applies to each runner.
+          additionalProperties: false
+          required: [platform, machineLabel]
+          properties:
+            platform: {type: string, enum: [macos-arm64, macos-x64, linux-arm64, linux-x64]}
+            machineLabel: {type: string, minLength: 1, maxLength: 100}
+        placement: {type: string, enum: [prefer-local, local-only, cloud-only]}
+        platform: {type: string, enum: [macos-arm64, macos-x64, linux-arm64, linux-x64, linux], description: Version 3 permits linux with machineLabel self-hosted for any self-hosted Linux architecture in the Default runner group.}
+        machineLabel:
+          type: string
+          maxLength: 100
+          description: Use self-hosted with version 3 platform linux for the generic Linux pool in the Default runner group. Other local selectors require a unique custom label.
+        queueMinutes: {type: integer, minimum: 1, maximum: 60}
+        priority: {type: string, enum: [high, low], description: Version 3 only; high uses 15 minutes (legacy 5 remains readable), low uses 60 minutes}
+        fallbackQueueMinutes: {type: integer, minimum: 1, maximum: 5, description: Version 3 second-runner window; default 2}
+    GitHubIntegration:
+      type: object
+      additionalProperties: false
+      required: [version, variable, workflow, platforms, defaults]
+      properties:
+        version: {type: integer, enum: [1, 2, 3]}
+        variable: {type: string, const: SLUICEWORK_ROUTING}
+        workflow: {type: string, description: Reviewed .github/workflows/ path}
+        platforms: {type: array, items: {type: string}, minItems: 1, maxItems: 5}
+        dispatcher:
+          type: object
+          additionalProperties: false
+          required: [appId, backendId, heartbeatSha]
+          properties:
+            appId: {type: integer, minimum: 1}
+            backendId: {type: string, minLength: 1, maxLength: 100}
+            heartbeatSha: {type: string, pattern: '^[a-f0-9]{40}$'}
+        defaults: {$ref: '#/components/schemas/GitHubRoutingPolicy'}
+    GitHubRoutingState:
+      type: object
+      additionalProperties: false
+      required: [repository, integration, policy, source, revision]
+      properties:
+        repository: {type: string}
+        integration: {$ref: '#/components/schemas/GitHubIntegration'}
+        policy: {$ref: '#/components/schemas/GitHubRoutingPolicy'}
+        source: {type: string, enum: [workflow defaults, legacy repository variables, repository variable]}
+        revision: {type: string, description: Hash of integration and effective published/legacy configuration}
+    GitHubRunnerGroup:
+      type: object
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        inherited: {type: boolean}
+        restricted_to_workflows: {type: boolean}
+    GitHubActionRunner:
+      type: object
+      additionalProperties: false
+      required: [id, name, os, labels, busy, status, scope, managed, available]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        os: {type: string}
+        status: {type: string, enum: [online, offline]}
+        busy: {type: boolean}
+        scope: {type: string, enum: [repository, organization]}
+        managed: {type: boolean, description: Sluicework-owned registration; use Machines for changes}
+        machineId: {type: string}
+        available: {type: boolean, description: Repository access confirmed by GitHub runner-group visibility}
+        group: {$ref: '#/components/schemas/GitHubRunnerGroup'}
+        labels:
+          type: array
+          items:
+            type: object
+            required: [name, type]
+            properties:
+              name: {type: string}
+              type: {type: string, enum: [custom, read-only]}
+    GitHubRoutingTarget:
+      type: object
+      required: [name, platform, machineLabel, managed, online, busy]
+      properties:
+        name: {type: string}
+        platform: {type: string}
+        machineLabel: {type: string}
+        managed: {type: boolean}
+        online: {type: boolean}
+        busy: {type: boolean}
+    GitHubRunnerInventory:
+      type: object
+      additionalProperties: false
+      required: [configured, repository, organizationEnabled, runners, targets]
+      properties:
+        configured: {type: boolean}
+        repository: {type: string}
+        organizationEnabled: {type: boolean}
+        organizationIssue: {type: string}
+        runners: {type: array, items: {$ref: '#/components/schemas/GitHubActionRunner'}}
+        targets: {type: array, items: {$ref: '#/components/schemas/GitHubRoutingTarget'}}
+    GitHubRegistrationSetup:
+      type: object
+      additionalProperties: false
+      required: [scope, url, name, label, application, token, expires_at]
+      properties:
+        scope: {type: string, enum: [repository, organization]}
+        url: {type: string, format: uri}
+        name: {type: string}
+        label: {type: string}
+        token: {type: string, format: password, description: Short-lived GitHub registration token; never persisted}
+        expires_at: {type: string, format: date-time}
+        application:
+          type: object
+          required: [os, architecture, filename, download_url, sha256_checksum]
+          properties:
+            os: {type: string, enum: [linux, osx]}
+            architecture: {type: string, enum: [arm64, x64]}
+            filename: {type: string}
+            download_url: {type: string, format: uri}
+            sha256_checksum: {type: string, pattern: '^[a-f0-9]{64}$'}
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      additionalProperties: false
+      required:
+      - error
+    Login:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          writeOnly: true
+      additionalProperties: false
+      required:
+      - username
+      - password
+    User:
+      type: object
+      properties:
+        username:
+          type: string
+        role:
+          type: string
+          enum:
+          - admin
+          - operator
+      additionalProperties: false
+      required:
+      - username
+      - role
+    EnrollmentToken:
+      type: object
+      properties:
+        token:
+          type: string
+        expiresIn:
+          type: integer
+          description: Lifetime in seconds.
+      additionalProperties: false
+      required:
+      - token
+      - expiresIn
+    Enrollment:
+      type: object
+      properties:
+        id:
+          type: string
+        credential:
+          type: string
+      additionalProperties: false
+      required:
+      - id
+      - credential
+      description: The worker saves this response to a private file bound to the orchestrator origin.
+    WorkerInfo:
+      type: object
+      properties:
+        os:
+          type: string
+          enum: ['', darwin, linux]
+          description: Reported by the worker from its runtime. Missing on legacy workers.
+        arch:
+          type: string
+          enum: ['', arm64, amd64]
+          description: amd64 means x86-64. Missing on legacy workers.
+        name:
+          type: string
+          maxLength: 128
+        version:
+          type: string
+          maxLength: 128
+        roles:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
+        workstation:
+          $ref: '#/components/schemas/WorkstationStatus'
+        runnerStatus:
+          type: string
+        runnerReason:
+          type: string
+          maxLength: 256
+          description: Current workstation admission or drain reason.
+      additionalProperties: false
+      required:
+      - name
+      - roles
+      description: The worker advertises its platform, capabilities and last observed launchd or systemd runner service status.
+    EnrollRequest:
+      type: object
+      properties:
+        token:
+          type: string
+        info:
+          $ref: '#/components/schemas/WorkerInfo'
+      additionalProperties: false
+      required:
+      - token
+      - info
+    GitHubActivity:
+      type: object
+      required: [configured, builds]
+      additionalProperties: false
+      properties:
+        configured:
+          type: boolean
+        repositories:
+          type: array
+          items: {type: string}
+          description: Explicitly configured shared repositories; omitted for repository-only runners
+        repository:
+          type: string
+        syncedAt:
+          type: string
+          format: date-time
+          description: Last complete successful sync; omitted until the first success.
+        issue:
+          type: string
+          description: Safe explanation of missing permission or temporary sync failure.
+        builds:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/GitHubBuild'
+    GitHubBuild:
+      type: object
+      required: [repository, machineId, runnerId, runId, jobId, attempt, workflow, name, branch, sha, status, url]
+      additionalProperties: false
+      properties:
+        repository:
+          type: string
+        machineId:
+          type: string
+        runnerId:
+          type: integer
+          format: int64
+        runId:
+          type: integer
+          format: int64
+        jobId:
+          type: integer
+          format: int64
+        attempt:
+          type: integer
+        workflow:
+          type: string
+        name:
+          type: string
+        branch:
+          type: string
+        sha:
+          type: string
+        status:
+          type: string
+          description: Last GitHub-reported job status, such as in_progress or completed.
+        conclusion:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        step:
+          type: string
+          description: Name of the in-progress step, when supplied by GitHub.
+        url:
+          type: string
+          format: uri
+          description: Canonical GitHub job URL constructed for the configured repository.
+    OpenWebUIStatus:
+      type: object
+      additionalProperties: false
+      required: [configured, enabled, healthy]
+      properties:
+        configured:
+          type: boolean
+        enabled:
+          type: boolean
+        url:
+          type: string
+        ollamaBaseUrl:
+          type: string
+        healthy:
+          type: boolean
+        error:
+          type: string
+    ClusterSettings:
+      type: object
+      additionalProperties: false
+      required: [hostname, os, arch, dataDir, primaryListen, network, logLimit]
+      properties:
+        hostname:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        dataDir:
+          type: string
+          readOnly: true
+        primaryListen:
+          type: string
+          readOnly: true
+        logLimit:
+          type: integer
+        githubIssue:
+          type: string
+        openWebUI:
+          type: object
+          additionalProperties: false
+          required: [enabled, url]
+          properties:
+            enabled:
+              type: boolean
+            url:
+              type: string
+            ollamaBaseUrl:
+              type: string
+        github:
+          type: object
+          additionalProperties: false
+          required: [appId, installationId, repository, keyConfigured]
+          properties:
+            appId:
+              type: integer
+            installationId:
+              type: integer
+            repository:
+              type: string
+            workstationGroupId: {type: integer}
+            workstationRepositories: {type: array, items: {type: string}}
+            organizationRunners:
+              type: boolean
+            keyConfigured:
+              type: boolean
+        network:
+          type: object
+          additionalProperties: false
+          required: [enabled, hostname, port]
+          properties:
+            enabled:
+              type: boolean
+            hostname:
+              type: string
+            port:
+              type: integer
+            url:
+              type: string
+              format: uri
+            caPem:
+              type: string
+              description: Public CA certificate only
+            fingerprint:
+              type: string
+              description: SHA-256 of the public CA DER, uppercase hexadecimal
+            certificateExpires:
+              type: string
+              format: date-time
+            issue:
+              type: string
+    WorkstationSettings:
+      type: object
+      additionalProperties: false
+      required: [buildThreads, maxLoadPerCpu, minAvailableMemoryMb, minIdleSeconds, requireAcPower, enableMinutes]
+      properties:
+        buildThreads:
+          type: integer
+          minimum: 1
+          maximum: 8
+        maxLoadPerCpu:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1
+        minAvailableMemoryMb:
+          type: integer
+          minimum: 512
+          maximum: 1048576
+        minIdleSeconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Linux requires zero because input-idle detection is unavailable.
+        requireAcPower:
+          type: boolean
+        enableMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          description: Used on the next local enable; saving does not extend an existing opt-in window.
+    WorkstationStatus:
+      type: object
+      additionalProperties: false
+      required: [settingsVersion, local, effective]
+      properties:
+        controlVersion:
+          type: integer
+          enum: [0, 1]
+        appliedControl:
+          type: string
+          maxLength: 128
+          description: Last observed capacity-request ID; old requests do not enable a restarted session
+        settingsVersion:
+          type: integer
+          enum: [1]
+        local:
+          $ref: '#/components/schemas/WorkstationSettings'
+          description: Installation defaults reported by this controller.
+        effective:
+          $ref: '#/components/schemas/WorkstationSettings'
+          description: Settings used by the current runner, or the next runner if no listener is active.
+        enabledUntil:
+          type: string
+          format: date-time
+    Runner:
+      type: object
+      properties:
+        control:
+          type: object
+          readOnly: true
+          additionalProperties: false
+          required: [id, operation, issuedAt, enabledUntil]
+          properties:
+            id:
+              type: string
+            operation:
+              type: string
+              enum: [enable, pause]
+            issuedAt:
+              type: string
+              format: date-time
+            enabledUntil:
+              type: string
+              format: date-time
+        settings:
+          anyOf:
+          - $ref: '#/components/schemas/WorkstationSettings'
+          - type: 'null'
+          description: Admin-managed settings, applied between builds. Set null explicitly to restore installation defaults; omission preserves existing settings for older clients. Requires a compatible workstation controller.
+        workstation:
+          type: boolean
+          description: Administrator approval for the opt-in ephemeral workstation controller. Requires a repository scope and a configured server-side GitHub App; service is unused.
+        name:
+          type: string
+        scope:
+          type: string
+          description: GitHub owner or owner/repository.
+        labels:
+          type: array
+          items:
+            type: string
+        service:
+          type: string
+          description: Official actions.runner.*.service systemd unit on Linux, or launchd label optionally prefixed by its system, user, or GUI domain on macOS.
+      additionalProperties: false
+      required:
+      - name
+    MachinePatch:
+      type: object
+      properties:
+        labels:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+          maxItems: 64
+        slots:
+          type: integer
+          minimum: 1
+          maximum: 256
+          default: 1
+        roleLimits:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+            maximum: 256
+        draining:
+          type: boolean
+        runner:
+          $ref: '#/components/schemas/Runner'
+          description: Set name to an empty string to remove the registration.
+      additionalProperties: false
+    Machine:
+      type: object
+      properties:
+        os:
+          type: string
+          enum: ['', darwin, linux]
+          description: Actual worker operating system, absent until a legacy worker upgrades.
+        arch:
+          type: string
+          enum: ['', arm64, amd64]
+          description: Actual worker CPU architecture (amd64 means x86-64).
+        name:
+          type: string
+          maxLength: 128
+        version:
+          type: string
+          maxLength: 128
+        roles:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
+        workstation:
+          $ref: '#/components/schemas/WorkstationStatus'
+        runnerStatus:
+          type: string
+        runnerReason:
+          type: string
+          maxLength: 256
+          description: Current workstation admission or drain reason.
+        labels:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+          maxItems: 64
+        slots:
+          type: integer
+          minimum: 1
+          maximum: 256
+          default: 1
+        roleLimits:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+            maximum: 256
+        draining:
+          type: boolean
+        runner:
+          $ref: '#/components/schemas/Runner'
+          description: Set name to an empty string to remove the registration.
+        id:
+          type: string
+        lastHeartbeat:
+          type: string
+          format: date-time
+        online:
+          type: boolean
+        revoked:
+          type: boolean
+        running:
+          type: integer
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - version
+      - roles
+      - labels
+      - slots
+      - roleLimits
+      - draining
+      - lastHeartbeat
+      - online
+      - revoked
+      - running
+    Input:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: ^[A-Za-z_][A-Za-z0-9_]{0,63}$
+        required:
+          type: boolean
+        paths:
+          type: array
+          items:
+            type: string
+          description: Approved absolute input files on the selected worker. Omit for a literal text input.
+      additionalProperties: false
+      required:
+      - name
+    Job:
+      type: object
+      properties:
+        os:
+          type: string
+          enum: ['', darwin, linux]
+          description: Required worker OS. Empty or omitted permits either. Never falls back across an explicit platform restriction.
+        arch:
+          type: string
+          enum: ['', arm64, amd64]
+          description: Required worker architecture (amd64 is x86-64). Empty or omitted permits either. Preserved in the approved run revision and retries.
+        id:
+          type: string
+          readOnly: true
+        revision:
+          type: integer
+          description: On PUT, supply the current revision to detect conflicting edits.
+        name:
+          type: string
+          maxLength: 160
+        type:
+          type: string
+          enum:
+          - script
+          - ai
+        role:
+          type: string
+          description: Defaults to script for a script and agent for an AI task.
+        labels:
+          type: array
+          items:
+            type: string
+          description: All labels must match the worker.
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Input'
+        command:
+          type: string
+          description: Absolute path to an approved executable. Required for scripts.
+        args:
+          type: array
+          items:
+            type: string
+          description: Passed as argument elements. {{name}} substitutes a declared literal or staged file.
+        workDir:
+          type: string
+          description: Subdirectory of the fresh attempt directory.
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          default: 300
+        prompt:
+          type: string
+          description: Approved template with {{name}} placeholders. Required for AI tasks.
+        connection:
+          type: string
+          description: Connection ID selected by the template. Required for AI tasks.
+        model:
+          type: string
+        maxTokens:
+          type: integer
+          minimum: 0
+          maximum: 131072
+        allowCloud:
+          type: boolean
+          default: false
+        outputFormat:
+          type: string
+          enum:
+          - text
+          - json
+        outputLimit:
+          type: integer
+          minimum: 1
+          maximum: 4194304
+          default: 65536
+          description: Retained output limit in bytes.
+        discardOutput:
+          type: boolean
+        safeToRepeat:
+          type: boolean
+        maxAutoRetries:
+          type: integer
+          minimum: 0
+          maximum: 3
+          default: 0
+          description: Optional automatic retries. Nonzero values require safeToRepeat.
+      additionalProperties: false
+      required:
+      - name
+      - type
+      description: Saving a job approves a new immutable revision. AI tasks require a permitted model, prompt and connection.
+    InputValues:
+      type: object
+      properties:
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
+    Attempt:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: integer
+        automatic:
+          type: boolean
+        state:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - cancelled
+          - interrupted
+        machineId:
+          type: string
+        queuedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        leaseUntil:
+          type: string
+          format: date-time
+        cancelRequested:
+          type: boolean
+        outcomeUnknown:
+          type: boolean
+        output:
+          type: string
+        outputTruncated:
+          type: boolean
+        logsTruncated:
+          type: boolean
+        error:
+          type: string
+      additionalProperties: false
+      required:
+      - id
+      - number
+      - automatic
+      - state
+      - queuedAt
+      - cancelRequested
+      - outcomeUnknown
+      - outputTruncated
+      - logsTruncated
+    Run:
+      type: object
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        job:
+          $ref: '#/components/schemas/Job'
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+        trigger:
+          type: string
+        scheduleId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - cancelled
+          - interrupted
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attempt'
+      additionalProperties: false
+      required:
+      - id
+      - jobId
+      - job
+      - inputs
+      - trigger
+      - createdAt
+      - state
+      - attempts
+      description: Each run contains its approved job revision, immutable input values and attempts in ascending order.
+    Claim:
+      type: object
+      properties:
+        runId:
+          type: string
+        attemptId:
+          type: string
+        job:
+          $ref: '#/components/schemas/Job'
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+        leaseUntil:
+          type: string
+          format: date-time
+      additionalProperties: false
+      required:
+      - runId
+      - attemptId
+      - job
+      - inputs
+      - leaseUntil
+    Renewal:
+      type: object
+      properties:
+        leaseUntil:
+          type: string
+          format: date-time
+        cancelRequested:
+          type: boolean
+      additionalProperties: false
+      required:
+      - leaseUntil
+      - cancelRequested
+    LogUpload:
+      type: object
+      properties:
+        text:
+          type: string
+        sequence:
+          type: integer
+          minimum: 0
+          format: int64
+          description: Supply consecutive per-attempt sequence numbers starting at 1 for idempotent retries. Omit or
+            use 0 for unsequenced append.
+      additionalProperties: false
+      required:
+      - text
+    Log:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        attemptId:
+          type: string
+        at:
+          type: string
+          format: date-time
+        text:
+          type: string
+        truncated:
+          type: boolean
+      additionalProperties: false
+      required:
+      - id
+      - attemptId
+      - at
+      - text
+    Completion:
+      type: object
+      properties:
+        state:
+          type: string
+          enum:
+          - succeeded
+          - failed
+          - timed_out
+          - cancelled
+          - interrupted
+        output:
+          type: string
+        outputTruncated:
+          type: boolean
+        error:
+          type: string
+      additionalProperties: false
+      required:
+      - state
+    ScheduleSpec:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        jobId:
+          type: string
+        cron:
+          type: string
+          description: 'Five cron fields: minute, hour, day of month, month, day of week. Sunday is 0 or SUN.'
+        timezone:
+          type: string
+          description: IANA time zone, e.g. America/Winnipeg.
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+          default: true
+        allowOverlap:
+          type: boolean
+          default: false
+      additionalProperties: false
+      required:
+      - name
+      - jobId
+      - cron
+      - timezone
+    Occurrence:
+      type: object
+      properties:
+        scheduledAt:
+          type: string
+          format: date-time
+        localSlot:
+          type: string
+          description: Local wall time through minutes, without an offset.
+        status:
+          type: string
+          enum:
+          - queued
+          - missed
+          - skipped_overlap
+        runId:
+          type: string
+        details:
+          type: string
+      additionalProperties: false
+      required:
+      - scheduledAt
+      - localSlot
+      - status
+    Schedule:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        jobId:
+          type: string
+        cron:
+          type: string
+          description: 'Five cron fields: minute, hour, day of month, month, day of week. Sunday is 0 or SUN.'
+        timezone:
+          type: string
+          description: IANA time zone, e.g. America/Winnipeg.
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+          default: true
+        allowOverlap:
+          type: boolean
+          default: false
+        id:
+          type: string
+        nextRun:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        latest:
+          oneOf:
+          - $ref: '#/components/schemas/Occurrence'
+          - type: 'null'
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - jobId
+      - cron
+      - timezone
+      - inputs
+      - enabled
+      - allowOverlap
+      - nextRun
+      - latest
+    PersonalTicket:
+      type: object
+      additionalProperties: false
+      required: [id, code, expires]
+      properties:
+        id: {type: string}
+        code: {type: string, format: password, description: One-use enrollment code; keep out of URLs, arguments and logs.}
+        expires: {type: string, format: date-time}
+    PersonalEnrollment:
+      type: object
+      additionalProperties: false
+      required: [ticketId, code, name, publicKey, signature]
+      properties:
+        ticketId: {type: string}
+        code: {type: string, format: password}
+        name: {type: string, maxLength: 128}
+        publicKey: {type: string, description: Base64url Ed25519 public key. The private key stays in the runtime.}
+        signature: {type: string, description: Signature of the enrollment context, ticket ID and public-key fingerprint.}
+    PersonalWebSearch:
+      type: object
+      additionalProperties: false
+      description: Explicit local permission for hosted public web research. Empty object allows public websites. No signed-in browser sessions or local tools.
+      properties:
+        allowedDomains:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Lowercase public DNS domains without schemes or paths; includes subdomains. Omit or leave empty for unrestricted public search.
+          items: {type: string, maxLength: 253}
+    PersonalCitation:
+      type: object
+      additionalProperties: false
+      required: [url, title, start, end]
+      properties:
+        url: {type: string, format: uri, maxLength: 4096, description: Public HTTP(S) citation URL; displayed but never fetched by the agent.}
+        title: {type: string}
+        start: {type: integer, minimum: 0, description: Inclusive Unicode code-point offset in saved result text.}
+        end: {type: integer, minimum: 1, description: Exclusive Unicode code-point offset in saved result text.}
+    PersonalManifest:
+      type: object
+      additionalProperties: false
+      required: [name, prompt, model, cron, timezone, expires, maxRunsPerDay, timeoutSeconds, outputLimit, shareResults]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        prompt: {type: string, minLength: 1, maxLength: 65536}
+        model: {type: string, minLength: 1, maxLength: 191}
+        cron: {type: string, description: Five-field cron expression; no embedded timezone.}
+        timezone: {type: string, description: Explicit IANA timezone.}
+        expires: {type: string, format: date-time, description: Local approval expires within 366 days.}
+        maxRunsPerDay: {type: integer, minimum: 1, maximum: 24}
+        timeoutSeconds: {type: integer, minimum: 15, maximum: 1800}
+        outputLimit: {type: integer, minimum: 128, maximum: 65536}
+        shareResults: {type: boolean, default: false, description: Upload generated output and citation URLs only if the exact local approval permits it. Otherwise send status only.}
+        webSearch: {$ref: '#/components/schemas/PersonalWebSearch'}
+        desktopNotifications: {type: boolean, default: false, description: Explicit local consent for status-only success/failure alerts on the runtime desktop. No task name or report content is included.}
+    PersonalProposalInput:
+      type: object
+      additionalProperties: false
+      required: [runtimeId, manifest]
+      properties:
+        runtimeId: {type: string}
+        manifest: {$ref: '#/components/schemas/PersonalManifest'}
+    PersonalProposal:
+      type: object
+      additionalProperties: false
+      required: [id, revision, runtimeId, owner, manifest]
+      properties:
+        id: {type: string}
+        revision: {type: integer}
+        runtimeId: {type: string}
+        owner: {type: string, readOnly: true}
+        manifest: {$ref: '#/components/schemas/PersonalManifest'}
+    PersonalRuntime:
+      type: object
+      additionalProperties: false
+      required: [id, owner, name, lastSeen, report]
+      properties:
+        id: {type: string, description: SHA256 fingerprint of the runtime public key.}
+        owner: {type: string}
+        name: {type: string}
+        lastSeen: {type: string, format: date-time}
+        report: {$ref: '#/components/schemas/PersonalReport'}
+    PersonalRun:
+      type: object
+      additionalProperties: false
+      required: [id, scheduleId, slot, started, state]
+      properties:
+        id: {type: string}
+        scheduleId: {type: string}
+        slot: {type: string, description: Local wall-clock slot without UTC offset, deduplicated across fall-back DST.}
+        started: {type: string, format: date-time}
+        state: {type: string}
+        message: {type: string}
+        result: {type: string, description: Omitted unless locally authorized for sharing.}
+        citations: {type: array, maxItems: 128, items: {$ref: '#/components/schemas/PersonalCitation'}, description: Omitted with private result text unless local approval permits sharing.}
+        webSearched: {type: boolean, default: false}
+        notification: {type: string, enum: [not_requested, pending, attempting, submitted, failed, unknown], description: Submitted means accepted by the desktop command; OS settings determine actual display. Unknown after restart is never replayed automatically.}
+    PersonalReport:
+      type: object
+      additionalProperties: false
+      required: [paused, signedIn, models, approvals, runs]
+      properties:
+        paused: {type: boolean}
+        signedIn: {type: boolean}
+        models: {type: array, maxItems: 128, items: {type: string}}
+        approvals:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, digest, paused, revision, cron, timezone, model, expires]
+            properties:
+              id: {type: string}
+              digest: {type: string}
+              paused: {type: boolean}
+              revision: {type: integer}
+              cron: {type: string}
+              timezone: {type: string}
+              model: {type: string}
+              expires: {type: string, format: date-time}
+              webSearch: {$ref: '#/components/schemas/PersonalWebSearch'}
+              desktopNotifications: {type: boolean, default: false}
+        runs: {type: array, maxItems: 10, items: {$ref: '#/components/schemas/PersonalRun'}}
+    PersonalEnvelope:
+      type: object
+      additionalProperties: false
+      required: [runtimeId, timestamp, nonce, payload, signature]
+      properties:
+        runtimeId: {type: string}
+        timestamp: {type: integer, format: int64, description: Unix seconds within two minutes of server time.}
+        nonce: {type: string, description: Fresh 24-byte random base64url nonce; accepted once.}
+        payload: {$ref: '#/components/schemas/PersonalReport'}
+        signature: {type: string, description: Ed25519 signature over protocol context, runtime ID, timestamp, nonce and SHA256 of the compact payload.}
+    ConnectionConfig:
+      type: object
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+          - ollama
+          - chatgpt
+          - openai
+          - anthropic
+          - gemini
+        endpoint:
+          type: string
+          description: Required for Ollama or Herd. Use verified HTTPS for a private LAN endpoint. Loopback also permits
+            HTTP. Cloud connections use the official vendor base URL.
+        models:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 128
+          uniqueItems: true
+        contextLength:
+          type: integer
+          minimum: 0
+          maximum: 32768
+          description: Ollama only. Use 0 for the runtime default or 512–32768 tokens. Setup starts at 4096.
+        keepAliveSeconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Ollama only. Release model memory after each request at 0; keep warm for up to five minutes otherwise.
+        thinking:
+          type: boolean
+          default: false
+          description: Ollama only. Curated models use direct answers unless enabled. Thinking consumes output tokens and its text is not retained as a job result.
+        disabled:
+          type: boolean
+        api_key:
+          type: string
+          writeOnly: true
+          format: password
+          description: Required when creating an API-key connection. Forbidden for chatgpt; create plan connections through /chatgpt/sign-in. Supply a replacement key on PUT to rotate. An empty
+            or omitted key preserves the existing credential.
+      additionalProperties: false
+      required:
+      - name
+      - kind
+      - models
+    Connection:
+      type: object
+      properties:
+        owner:
+          type: string
+          readOnly: true
+          description: Present for personal subscription connections; empty or omitted for shared connections.
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+          - ollama
+          - chatgpt
+          - openai
+          - anthropic
+          - gemini
+        endpoint:
+          type: string
+          description: Required for Ollama or Herd. Use verified HTTPS for a private LAN endpoint. Loopback also permits
+            HTTP. Cloud connections use the official vendor base URL.
+        models:
+          type: array
+          items:
+            type: string
+          minItems: 0
+          maxItems: 128
+          uniqueItems: true
+        contextLength:
+          type: integer
+          minimum: 0
+          maximum: 32768
+          description: Ollama only. Use 0 for the runtime default or 512–32768 tokens. Setup starts at 4096.
+        keepAliveSeconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: Ollama only. Release model memory after each request at 0; keep warm for up to five minutes otherwise.
+        thinking:
+          type: boolean
+          default: false
+          description: Ollama only. Curated models use direct answers unless enabled. Thinking consumes output tokens and its text is not retained as a job result.
+        disabled:
+          type: boolean
+        id:
+          type: string
+        health:
+          type: string
+          enum:
+          - untested
+          - healthy
+          - error
+        last_checked:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - kind
+      - endpoint
+      - models
+      - disabled
+      - health
+    ModelPreset:
+      type: object
+      required: [model, name, download, description, minMemoryGB, optional, installable, source]
+      properties:
+        model: {type: string}
+        name: {type: string}
+        download: {type: string, description: "Approximate registry download size, not inference memory."}
+        description: {type: string}
+        minMemoryGB: {type: integer, description: Advisory hardware budget.}
+        optional: {type: boolean}
+        installable: {type: boolean}
+        source: {type: string, format: uri}
+    InstalledModel:
+      type: object
+      required: [name, size]
+      properties:
+        name: {type: string}
+        size: {type: integer, format: int64, description: Downloaded bytes reported by Ollama.}
+    ModelInstallation:
+      type: object
+      required: [id, connectionId, model, status, message, total, completed, created]
+      properties:
+        id: {type: string}
+        connectionId: {type: string}
+        model: {type: string}
+        status:
+          type: string
+          enum: [running, succeeded, failed, cancelled, interrupted]
+        message: {type: string}
+        total: {type: integer, format: int64, description: "Bytes in the current layer, or 0 when not yet known."}
+        completed: {type: integer, format: int64}
+        created: {type: string, format: date-time}
+    ModelInventory:
+      type: object
+      required: [catalog, installed, installations]
+      properties:
+        catalog:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelPreset'
+        installed:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstalledModel'
+        installations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelInstallation'
+        runtimeError: {type: string}
+    ProviderCall:
+      type: object
+      properties:
+        attempt_id:
+          type: string
+        connection_id:
+          type: string
+        kind:
+          type: string
+          enum:
+          - ollama
+          - openai
+          - anthropic
+          - gemini
+        model:
+          type: string
+        started:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum:
+          - running
+          - succeeded
+          - failed
+          - cancelled
+          - interrupted
+        error:
+          type: string
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+      additionalProperties: false
+      required:
+      - attempt_id
+      - connection_id
+      - kind
+      - model
+      - started
+      - duration_ms
+      - status
+    InferenceInputs:
+      type: object
+      properties:
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+          description: Contents of selected, approved file inputs keyed by their declared name. The server supplies literal
+            inputs and selects the approved template and connection.
+      additionalProperties: false
+    InferenceResult:
+      type: object
+      properties:
+        text:
+          type: string
+        truncated:
+          type: boolean
+      additionalProperties: false
+      required:
+      - text
+      - truncated
+    OverviewHour:
+      type: object
+      properties:
+        start:
+          type: string
+          format: date-time
+        runs:
+          type: integer
+        failures:
+          type: integer
+      additionalProperties: false
+      required:
+      - start
+      - runs
+      - failures
+    RecentFailure:
+      type: object
+      properties:
+        id:
+          type: string
+        jobName:
+          type: string
+        jobType:
+          type: string
+          enum:
+          - script
+          - ai
+        machineId:
+          type: string
+        state:
+          type: string
+          enum:
+          - failed
+          - timed_out
+          - interrupted
+        createdAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+      required:
+      - id
+      - jobName
+      - jobType
+      - machineId
+      - state
+      - createdAt
+    Overview:
+      type: object
+      properties:
+        queued:
+          type: integer
+        running:
+          type: integer
+        failed24h:
+          type: integer
+        unhealthyConnections:
+          type: integer
+        hourly:
+          type: array
+          items:
+            $ref: '#/components/schemas/OverviewHour'
+          minItems: 24
+          maxItems: 24
+        recentFailures:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecentFailure'
+          maxItems: 3
+      additionalProperties: false
+      required:
+      - queued
+      - running
+      - failed24h
+      - unhealthyConnections
+      - hourly
+      - recentFailures
+      description: Current queue counts, enabled connections in error, and count of currently unsuccessful runs whose
+        latest attempt ended in the past 24 hours. Hourly series groups runs by creation time. Recent failures are ordered
+        by finish time across retained history.

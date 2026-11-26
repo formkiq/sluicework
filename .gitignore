@@ -1,0 +1,16 @@
+/web/node_modules/
+/sluicework
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+/release/
+/web/dist/
+.env
+*.key
+*.p12
+credential.json
+__pycache__/
+/packaging/macos/herd/.venv/
+/packaging/macos/open-webui/.venv/
+sluicework-codex*.json

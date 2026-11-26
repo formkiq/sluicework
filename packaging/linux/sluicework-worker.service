@@ -1,0 +1,23 @@
+[Unit]
+Description=Sluicework worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=sluiceworker
+Group=sluiceworker
+ExecStart=/opt/sluicework/bin/sluicework worker --config /etc/sluicework/worker.json
+WorkingDirectory=/var/lib/sluicework/worker
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+AppArmorProfile=-sluicework-bwrap
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/sluicework/worker
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

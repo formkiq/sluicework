@@ -1,0 +1,10 @@
+Test run 481 | macOS arm64 | 88 passed, 3 failed
+
+FAIL CacheTests.testRefreshAfterExpiry
+Expected a refreshed value after 60 seconds. Observed the cached value at 61 seconds.
+
+FAIL CacheTests.testExpiredEntryIsReplaced
+Expected revision 2 after refresh. Observed revision 1.
+
+FAIL ExportTests.testUnicodeFilename
+Expected résumé.json in the destination directory. Observed resume.json.

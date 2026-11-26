@@ -1,0 +1,7 @@
+# A named user-namespace exception for Sluicework's private distro helper.
+# No system-wide sysctl change or attachment to another app's bwrap profile.
+abi <abi/4.0>,
+include <tunables/global>
+profile sluicework-bwrap /opt/sluicework/bin/sluicework-bwrap flags=(unconfined) {
+  userns,
+}

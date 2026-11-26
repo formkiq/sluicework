@@ -1,0 +1,713 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Optional outbound-only Sluicework Spot permissions and security group, with an explicitly selected dedicated or existing network. Creates no runner EC2 instances.",
+  "Parameters": {
+    "DispatcherRoleName": {
+      "Type": "String"
+    },
+    "BackendId": {
+      "Type": "String",
+      "AllowedPattern": "[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"
+    },
+    "NetworkMode": {
+      "Type": "String",
+      "AllowedValues": [
+        "dedicated",
+        "existing"
+      ],
+      "Description": "Required explicit choice: dedicated (recommended for new stacks) creates an isolated runner VPC; existing preserves VpcId/PublicSubnetA-C on upgrades. No implicit network migration."
+    },
+    "DedicatedCidr": {
+      "Type": "String",
+      "Default": "10.250.0.0/24",
+      "AllowedPattern": "^([0-9]{1,3}\\.){3}0/24$",
+      "Description": "Dedicated mode only: a /24 split into two /25 public subnets. Do not peer or attach this VPC to other networks."
+    },
+    "VpcId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "(^$|^vpc-[a-f0-9]{8,17}$)",
+      "Description": "Existing mode only: the VPC for the runner security group."
+    },
+    "ArmImageId": {
+      "Type": "AWS::EC2::Image::Id",
+      "Description": "Pinned Canonical Ubuntu 24.04 ARM64 EBS AMI, root device /dev/sda1."
+    },
+    "CreateSpotServiceRole": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "PublicSubnetA": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "(^$|^subnet-[a-f0-9]{8,17}$)",
+      "Description": "Existing mode only (required there): public subnet in VpcId with an Internet Gateway route."
+    },
+    "PublicSubnetB": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "(^$|^subnet-[a-f0-9]{8,17}$)",
+      "Description": "Existing mode only: optional public subnet in another availability zone."
+    },
+    "PublicSubnetC": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "(^$|^subnet-[a-f0-9]{8,17}$)",
+      "Description": "Existing mode only: optional public subnet in another availability zone."
+    }
+  },
+  "Rules": {
+    "ExistingNetworkIsNamed": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "NetworkMode"
+          },
+          "existing"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::And": [
+              {
+                "Fn::Not": [
+                  {
+                    "Fn::Equals": [
+                      {
+                        "Ref": "VpcId"
+                      },
+                      ""
+                    ]
+                  }
+                ]
+              },
+              {
+                "Fn::Not": [
+                  {
+                    "Fn::Equals": [
+                      {
+                        "Ref": "PublicSubnetA"
+                      },
+                      ""
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Existing mode requires VpcId and PublicSubnetA."
+        }
+      ]
+    }
+  },
+  "Conditions": {
+    "NeedsSpotServiceRole": {
+      "Fn::Equals": [
+        {
+          "Ref": "CreateSpotServiceRole"
+        },
+        "true"
+      ]
+    },
+    "HasSubnetB": {
+      "Fn::And": [
+        {
+          "Condition": "Existing"
+        },
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "PublicSubnetB"
+                },
+                ""
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "HasSubnetC": {
+      "Fn::And": [
+        {
+          "Condition": "Existing"
+        },
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "PublicSubnetC"
+                },
+                ""
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Dedicated": {
+      "Fn::Equals": [
+        {
+          "Ref": "NetworkMode"
+        },
+        "dedicated"
+      ]
+    },
+    "Existing": {
+      "Fn::Equals": [
+        {
+          "Ref": "NetworkMode"
+        },
+        "existing"
+      ]
+    }
+  },
+  "Resources": {
+    "RunnerVpc": {
+      "Type": "AWS::EC2::VPC",
+      "Condition": "Dedicated",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "DedicatedCidr"
+        },
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": false,
+        "Tags": [
+          {
+            "Key": "sluicework:backend",
+            "Value": {
+              "Ref": "BackendId"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "sluicework-spot-${BackendId}"
+            }
+          }
+        ]
+      }
+    },
+    "RunnerInternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Condition": "Dedicated",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "sluicework:backend",
+            "Value": {
+              "Ref": "BackendId"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "sluicework-spot-${BackendId}"
+            }
+          }
+        ]
+      }
+    },
+    "RunnerGatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Condition": "Dedicated",
+      "Properties": {
+        "VpcId": {
+          "Ref": "RunnerVpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "RunnerInternetGateway"
+        }
+      }
+    },
+    "RunnerRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Condition": "Dedicated",
+      "Properties": {
+        "VpcId": {
+          "Ref": "RunnerVpc"
+        },
+        "Tags": [
+          {
+            "Key": "sluicework:backend",
+            "Value": {
+              "Ref": "BackendId"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "sluicework-spot-${BackendId}"
+            }
+          }
+        ]
+      }
+    },
+    "RunnerDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "Condition": "Dedicated",
+      "DependsOn": "RunnerGatewayAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RunnerRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "RunnerInternetGateway"
+        }
+      }
+    },
+    "RunnerSubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Condition": "Dedicated",
+      "Properties": {
+        "VpcId": {
+          "Ref": "RunnerVpc"
+        },
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::Cidr": [
+                {
+                  "Ref": "DedicatedCidr"
+                },
+                2,
+                7
+              ]
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "sluicework:backend",
+            "Value": {
+              "Ref": "BackendId"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "sluicework-spot-${BackendId}-a"
+            }
+          }
+        ]
+      }
+    },
+    "RunnerSubnetARoutes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Condition": "Dedicated",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "RunnerSubnetA"
+        },
+        "RouteTableId": {
+          "Ref": "RunnerRouteTable"
+        }
+      }
+    },
+    "RunnerSubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Condition": "Dedicated",
+      "Properties": {
+        "VpcId": {
+          "Ref": "RunnerVpc"
+        },
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::Cidr": [
+                {
+                  "Ref": "DedicatedCidr"
+                },
+                2,
+                7
+              ]
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "sluicework:backend",
+            "Value": {
+              "Ref": "BackendId"
+            }
+          },
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "sluicework-spot-${BackendId}-b"
+            }
+          }
+        ]
+      }
+    },
+    "RunnerSubnetBRoutes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Condition": "Dedicated",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "RunnerSubnetB"
+        },
+        "RouteTableId": {
+          "Ref": "RunnerRouteTable"
+        }
+      }
+    },
+    "RunnerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Outbound-only one-job Sluicework Spot runners",
+        "VpcId": {
+          "Fn::If": [
+            "Dedicated",
+            {
+              "Ref": "RunnerVpc"
+            },
+            {
+              "Ref": "VpcId"
+            }
+          ]
+        },
+        "SecurityGroupIngress": [],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "sluicework:backend",
+            "Value": {
+              "Ref": "BackendId"
+            }
+          }
+        ]
+      }
+    },
+    "RunnerPermissions": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": {
+          "Fn::Sub": "sluicework-spot-${BackendId}"
+        },
+        "Roles": [
+          {
+            "Ref": "DispatcherRoleName"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "InspectSpotMachines",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:DescribeInstances",
+                "ec2:DescribeImages",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": {
+                    "Ref": "AWS::Region"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "ApprovedImageAndNetwork",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:RunInstances"
+              ],
+              "Resource": [
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}::image/${ArmImageId}"
+                },
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${RunnerSecurityGroup}"
+                }
+              ]
+            },
+            {
+              "Sid": "DisposableNetworkInterfaces",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:RunInstances"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+              }
+            },
+            {
+              "Sid": "TaggedEncryptedVolumes",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:RunInstances"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestTag/sluicework:backend": {
+                    "Ref": "BackendId"
+                  }
+                },
+                "Bool": {
+                  "ec2:Encrypted": "true"
+                }
+              }
+            },
+            {
+              "Sid": "BoundedSpotInstanceTypes",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:RunInstances"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestTag/sluicework:backend": {
+                    "Ref": "BackendId"
+                  },
+                  "ec2:InstanceMarketType": "spot",
+                  "ec2:InstanceType": [
+                    "c6gd.medium",
+                    "c8gn.large"
+                  ],
+                  "ec2:MetadataHttpTokens": "required"
+                },
+                "Null": {
+                  "ec2:InstanceProfile": "true"
+                },
+                "NumericEquals": {
+                  "ec2:MetadataHttpPutResponseHopLimit": "1"
+                }
+              }
+            },
+            {
+              "Sid": "OneTimeSpotRequests",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:RunInstances"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:spot-instances-request/*"
+              }
+            },
+            {
+              "Sid": "TagOnlyDuringLaunch",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:CreateTags"
+              ],
+              "Resource": [
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                },
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+                }
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "ec2:CreateAction": "RunInstances",
+                  "aws:RequestTag/sluicework:backend": {
+                    "Ref": "BackendId"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "TerminateThisFleetOnly",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:TerminateInstances"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "ec2:ResourceTag/sluicework:backend": {
+                    "Ref": "BackendId"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "ApprovedSubnets",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:RunInstances"
+              ],
+              "Resource": {
+                "Fn::If": [
+                  "Dedicated",
+                  [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${RunnerSubnetA}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${RunnerSubnetB}"
+                    }
+                  ],
+                  [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnetA}"
+                    },
+                    {
+                      "Fn::If": [
+                        "HasSubnetB",
+                        {
+                          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnetB}"
+                        },
+                        {
+                          "Ref": "AWS::NoValue"
+                        }
+                      ]
+                    },
+                    {
+                      "Fn::If": [
+                        "HasSubnetC",
+                        {
+                          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnetC}"
+                        },
+                        {
+                          "Ref": "AWS::NoValue"
+                        }
+                      ]
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "SpotServiceRole": {
+      "Type": "AWS::IAM::ServiceLinkedRole",
+      "Condition": "NeedsSpotServiceRole",
+      "Properties": {
+        "AWSServiceName": "spot.amazonaws.com",
+        "Description": "EC2 Spot one-time instance service role"
+      }
+    }
+  },
+  "Outputs": {
+    "SecurityGroupId": {
+      "Value": {
+        "Ref": "RunnerSecurityGroup"
+      }
+    },
+    "PublicSubnetIds": {
+      "Value": {
+        "Fn::If": [
+          "Dedicated",
+          {
+            "Fn::Join": [
+              ",",
+              [
+                {
+                  "Ref": "RunnerSubnetA"
+                },
+                {
+                  "Ref": "RunnerSubnetB"
+                }
+              ]
+            ]
+          },
+          {
+            "Fn::Join": [
+              ",",
+              [
+                {
+                  "Ref": "PublicSubnetA"
+                },
+                {
+                  "Fn::If": [
+                    "HasSubnetB",
+                    {
+                      "Ref": "PublicSubnetB"
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                },
+                {
+                  "Fn::If": [
+                    "HasSubnetC",
+                    {
+                      "Ref": "PublicSubnetC"
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    "ArmImageId": {
+      "Value": {
+        "Ref": "ArmImageId"
+      }
+    },
+    "AccountId": {
+      "Value": {
+        "Ref": "AWS::AccountId"
+      }
+    },
+    "Region": {
+      "Value": {
+        "Ref": "AWS::Region"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+(version 1)
+(allow default)
+
+; Protect the daemon's private state and every other attempt. Allow metadata
+; traversal so tools can resolve the current attempt's canonical pathname.
+(deny file-read-data file-map-executable file-write*
+  (require-all
+    (require-any (subpath (param "STATE")) (subpath (param "JOBS")))
+    (require-not (subpath (param "RUN")))))
+
+; Descendants keep their sandbox. They may signal and inspect each other.
+(deny process-info* signal (require-not (target same-sandbox)))
+(deny mach-priv-task-port)
+(deny sysctl-read (sysctl-name-prefix "kern.procargs"))
+(deny file-write-setugid)

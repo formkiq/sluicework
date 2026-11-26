@@ -1,0 +1,21 @@
+[Unit]
+Description=Sluicework orchestrator
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=sluiceserver
+Group=sluiceserver
+ExecStart=/opt/sluicework/bin/sluicework server --config /etc/sluicework/server.json
+WorkingDirectory=/var/lib/sluicework/server
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/sluicework/server
+
+[Install]
+WantedBy=multi-user.target

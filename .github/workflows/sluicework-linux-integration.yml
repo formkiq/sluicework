@@ -1,0 +1,84 @@
+name: Linux native integration
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux/amd64
+          - runner: ubuntu-24.04-arm
+            target: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
+        with:
+          go-version: '1.25.x'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install Linux isolation prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap curl openssl python3 zstd
+      - name: Build native installer
+        run: bash packaging/build-release.sh release '${{ matrix.target }}'
+      - name: Prepare Linux sandbox policy
+        if: runner.os == 'Linux'
+        run: |
+          tar -xzf release/Sluicework-Linux-*.tar.gz -C release
+          sudo bash "$(find release -maxdepth 1 -type d -name 'Sluicework-Linux-*' -print -quit)/install.sh" isolation
+      - name: Test native execution and placement
+        run: |
+          node --test integrations/github-actions/*.test.mjs integrations/github-actions/priority/*.test.mjs
+          go test -count=1 -race -buildvcs=false ./...
+          go vet -buildvcs=false ./...
+          unformatted=$(gofmt -l cmd docs internal web/embed.go)
+          if [[ -n "$unformatted" ]]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+          python3 -B -m unittest discover -s packaging/linux/tests -p 'test_*.py'
+          python3 -B -m unittest discover -s packaging/macos/tests -p 'test_*.py'
+      - name: Verify Spot bootstrap privilege and metadata isolation
+        if: matrix.target == 'linux/arm64'
+        timeout-minutes: 8
+        env:
+          SLUICEWORK_TEST_SPOT_BOOTSTRAP: '1'
+        run: go test -count=1 -buildvcs=false ./internal/awsspot -run TestUbuntuBootstrapPrivilegesAndMetadataFirewall -v
+      - name: Validate isolated Open WebUI runtime and dependency advisories
+        timeout-minutes: 12
+        run: bash packaging/macos/tests/open_webui_runtime_test.sh
+      - name: Build the serverless dispatcher
+        if: matrix.target == 'linux/arm64'
+        run: scripts/build-queue-lambda.sh "$RUNNER_TEMP/priority-lambda"
+      - name: Verify Linux service installation
+        if: runner.os == 'Linux'
+        run: |
+          sudo --preserve-env=GITHUB_ACTIONS python3 -I packaging/linux/tests/smoke-install.py "$(find release -maxdepth 1 -type d -name 'Sluicework-Linux-*' -print -quit)"
+      - name: Linux service diagnostics
+        if: failure() && runner.os == 'Linux'
+        run: sudo journalctl -u sluicework-server -u sluicework-worker --no-pager -n 120
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Sluicework-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            release/*.tar.gz
+            release/SHA256SUMS

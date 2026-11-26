@@ -1,0 +1,22 @@
+{
+  "name": "Summarize test failures",
+  "type": "ai",
+  "role": "agent",
+  "labels": ["summaries"],
+  "inputs": [
+    {
+      "name": "report",
+      "required": true,
+      "paths": ["/Library/Sluicework/inputs/failures.txt"]
+    }
+  ],
+  "prompt": "Summarize the test failures below. Group repeated failures, name the failing tests and distinguish observed errors from suspected causes.\n\n{{report}}",
+  "connection": "REPLACE_WITH_LOCAL_CONNECTION_ID",
+  "model": "qwen2.5:3b",
+  "allowCloud": false,
+  "maxTokens": 500,
+  "outputFormat": "text",
+  "outputLimit": 16384,
+  "timeoutSeconds": 180,
+  "safeToRepeat": false
+}
