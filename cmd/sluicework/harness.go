@@ -21,7 +21,7 @@ import (
 func harnessClientCommand(ctx context.Context, args []string, out io.Writer) error {
 	f := flag.NewFlagSet("coding-client", flag.ContinueOnError)
 	f.SetOutput(out)
-	config := f.String("config", "", "server configuration file on the orchestrator")
+	config := f.String("config", os.Getenv("SLUICEWORK_CONFIG"), "server configuration (defaults to SLUICEWORK_CONFIG)")
 	connection := f.String("connection", "", "existing AI connection name or ID")
 	models := f.String("models", "", "comma-separated permitted installed model tags")
 	name := f.String("name", "", "coding client name")

@@ -13,8 +13,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  publication:
+    name: Public source checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test publication checks
+        run: python3 -B -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Check committed source and reachable history
+        run: python3 scripts/check-public-source.py --history
+
   native:
     name: ${{ matrix.target }}
+    needs: publication
     strategy:
       fail-fast: false
       matrix:

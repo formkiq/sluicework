@@ -51,3 +51,9 @@ self-hosted selectors.
 Never commit credentials, private deployment files or operational screenshots.
 Use synthetic IDs and `example-org` repositories in examples. Check source and
 artifacts for account details before sharing; do not copy private Git history.
+Run `python3 scripts/check-public-source.py` before committing. Public CI also
+checks reachable history. See [configuration ownership](docs/configuration.md)
+for explicit environment files and private deployment storage.
+Use the repository's [public-source review skill](.agents/skills/review-public-source/SKILL.md)
+when reviewing changes for publication, including organizational infrastructure
+details in source, history, PR text and generated artifacts.

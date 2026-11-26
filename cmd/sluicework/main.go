@@ -35,7 +35,7 @@ import (
 )
 
 const version = "0.1.0"
-const usage = "sluicework {init|server|join|worker|workstation|workstation-install|workstation-enable|workstation-pause|workstation-status|github-queue|enroll-token|user|local-ai|open-webui|codex|personal-agent|coding-client|install-cli|backup|restore|version} --config FILE; sluicework {runtime-check|open-webui-check} --endpoint URL"
+const usage = "sluicework [--env-file FILE] {init|server|join|worker|workstation|workstation-install|workstation-enable|workstation-pause|workstation-status|github-queue|enroll-token|user|local-ai|open-webui|codex|personal-agent|coding-client|install-cli|backup|restore|version} --config FILE; sluicework {runtime-check|open-webui-check} --endpoint URL"
 
 type serverConfig struct {
 	GitHub   *githubapp.Config `json:"github,omitempty"`
@@ -89,6 +89,10 @@ func main() {
 	}
 }
 func execute(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
+	args, err := environmentArgs(args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -117,7 +121,7 @@ func execute(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 		return codexCommand(ctx, args[1:], in, out)
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
-	path := f.String("config", "", "JSON configuration file")
+	path := f.String("config", os.Getenv("SLUICEWORK_CONFIG"), "JSON configuration file (defaults to SLUICEWORK_CONFIG)")
 	var dest, src, name, role, endpoint, caFile, ollamaURL string
 	switch command {
 	case "backup":

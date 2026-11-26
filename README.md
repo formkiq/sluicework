@@ -33,6 +33,12 @@ The server publishes its OpenAPI description at `/api/v1/openapi.yaml`. Backups 
 
 ## Build and test
 
+Use this public repository for application development. Keep organization
+deployment files and credentials outside the checkout; operational settings
+remain in the main admin. See [private configuration and optional environment
+files](docs/configuration.md) for `--env-file`, `SLUICEWORK_CONFIG` and publication
+checks.
+
 For opt-in personal-machine CI, see [Workstation builds and explicit cloud fallback](docs/workstation.md).
 The macOS `--workstation` package includes a `manage` helper for setup, background
 startup, status, enable/pause, graceful shutdown and local password reset under
@@ -115,6 +121,31 @@ Repository priority and runner order are managed in Actions runners.
 ### Controlled coding clients
 
 Use Codex on a separate Mac or Linux workstation through Sluicework-managed HTTPS, scoped credentials, model policy and inference admission. Configure **AI connections → Coding clients** and follow [coding client setup](docs/coding-clients.md). No direct Ollama access is needed on the coding workstation.
+
+## Organize an organization deployment
+
+Use two independent repositories: this public repository for application code,
+and a **private companion repository** for your organization's deployment.
+For example:
+
+```text
+workspace/
+  sluicework/           # Public application checkout
+  organization-config/ # Separate private configuration repository
+```
+
+The private repository can hold deployment scripts, repository allowlists,
+runner-policy definitions, infrastructure parameters and a pinned Sluicework
+release or reviewed public commit. Build or install that application version and
+provide configuration from outside its checkout. This keeps application updates
+available without maintaining a fork or merging private Git history into public
+source. Each organization owns its own companion repository and credentials.
+
+Store keys and tokens in protected runtime storage or a secret manager; commit
+references rather than secret values. Keep live databases, run output and
+backups outside both source repositories. Continue using the main admin for
+operational settings: it does not automatically synchronize changes with your
+configuration repository. See [configuration ownership and environment files](docs/configuration.md).
 
 ## Source distribution
 
